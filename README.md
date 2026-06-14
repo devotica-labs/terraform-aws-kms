@@ -94,7 +94,171 @@ key_users          = [aws_iam_role.app.arn]
 - Releases are cut by `release-please` on Conventional Commits. Each release is keyless-signed via cosign and ships a CycloneDX SBOM.
 
 <!-- BEGIN_TF_DOCS -->
-<!-- terraform-docs will inject the inputs/outputs/resources tables here on the next CI run -->
+
+
+## Usage
+
+### Basic
+
+```hcl
+# ---------------------------------------------------------------------------
+# Provider block — CI-friendly skip flags + non-AWS-shaped placeholder creds.
+#
+# The skip_* flags let `terraform plan` run without calling STS
+# GetCallerIdentity / EC2 IMDS. The access_key / secret_key values are
+# intentionally NOT AWS-shaped (no AKIA / ASIA prefix, no 40-char base64)
+# so gitleaks does not flag them as a leaked AWS access key — they exist
+# only to satisfy the provider credential chain.
+#
+# In a real deployment, drop the skip_* flags AND the placeholder creds,
+# and rely on your normal credential chain (OIDC role, profile,
+# assume-role, etc.).
+# ---------------------------------------------------------------------------
+provider "aws" {
+  region                      = "ap-south-1"
+  access_key                  = "not-a-real-aws-key"
+  secret_key                  = "not-a-real-aws-secret"
+  skip_credentials_validation = true
+  skip_metadata_api_check     = true
+  skip_requesting_account_id  = true
+}
+
+# Uses local path during development.
+# Change to Registry source after first release:
+#   source  = "devotica-labs/kms/aws"
+#   version = "~> 0.1"
+
+module "kms" {
+  source = "../.."
+
+  # Hardcoded for offline CI plan (the example skips STS via the provider's
+  # skip_* flags). In a real deployment, drop this line and the module will
+  # auto-detect via the aws_caller_identity data source.
+  account_id = "123456789012"
+
+  alias       = "my-app-data"
+  description = "Symmetric SSE-KMS key for my-app data at rest."
+
+  tags = {
+    Environment = "example"
+    Project     = "terraform-aws-kms"
+    Owner       = "platform@devotica.com"
+    CostCenter  = "PLATFORM-OSS"
+    ManagedBy   = "Terraform"
+    Repo        = "https://github.com/devotica-labs/terraform-aws-kms"
+  }
+}
+```
+
+### Complete
+
+```hcl
+# ---------------------------------------------------------------------------
+# Provider block — CI-friendly skip flags + non-AWS-shaped placeholder creds.
+# ---------------------------------------------------------------------------
+provider "aws" {
+  region                      = "ap-south-1"
+  access_key                  = "not-a-real-aws-key"
+  secret_key                  = "not-a-real-aws-secret"
+  skip_credentials_validation = true
+  skip_metadata_api_check     = true
+  skip_requesting_account_id  = true
+}
+
+# Uses local path during development.
+# Change to Registry source after first release:
+#   source  = "devotica-labs/kms/aws"
+#   version = "~> 0.1"
+
+module "kms" {
+  source = "../.."
+
+  # Hardcoded for offline CI plan (the example skips STS via the provider's
+  # skip_* flags). In a real deployment, drop this line and the module will
+  # auto-detect via the aws_caller_identity data source.
+  account_id = "111122223333"
+
+  alias       = "devotica-app-data"
+  description = "Multi-region SSE-KMS key for devotica-app data at rest. Used by S3, RDS, EBS, Secrets Manager."
+
+  # Multi-region for cross-region DR (RBI data-durability mandate).
+  multi_region = true
+
+  # ── Administration: dedicated security team role can manage but not use ──
+  key_administrators = [
+    "arn:aws:iam::111122223333:role/devotica-security-kms-admin",
+  ]
+
+  # ── Direct use: the app's task role can encrypt/decrypt ──
+  key_users = [
+    "arn:aws:iam::111122223333:role/devotica-prod-ecs-task",
+    "arn:aws:iam::111122223333:role/devotica-prod-lambda-exec",
+  ]
+
+  # ── AWS service principals — usage gated by kms:ViaService ──
+  # E.g. CloudWatch Log Groups in this region, S3 buckets at large.
+  service_principals = [
+    "logs.ap-south-1.amazonaws.com",
+    "s3.amazonaws.com",
+  ]
+
+  # Defaults already include rotation enabled + 30-day deletion window.
+
+  tags = {
+    Environment = "production"
+    Project     = "platform"
+    Owner       = "cloud-team@devotica.com"
+    CostCenter  = "PLATFORM"
+    ManagedBy   = "Terraform"
+    Repo        = "https://github.com/devotica-labs/terraform-aws-kms"
+  }
+}
+```
+
+## Requirements
+
+| Name | Version |
+|------|---------|
+| <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.6.0, < 2.0.0 |
+| <a name="requirement_aws"></a> [aws](#requirement\_aws) | ~> 6.44 |
+## Providers
+
+| Name | Version |
+|------|---------|
+| <a name="provider_aws"></a> [aws](#provider\_aws) | ~> 6.44 |
+## Resources
+
+| Name | Type |
+|------|------|
+| [aws_kms_alias.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/kms_alias) | resource |
+| [aws_kms_key.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/kms_key) | resource |
+## Inputs
+
+| Name | Description | Type | Default | Required |
+|------|-------------|------|---------|:--------:|
+| <a name="input_alias"></a> [alias](#input\_alias) | Alias for the KMS key (without the `alias/` prefix — the module adds it). E.g. "devotica-app-data". | `string` | n/a | yes |
+| <a name="input_account_id"></a> [account\_id](#input\_account\_id) | AWS account ID baked into the mandatory root statement of the key policy. Leave empty to auto-detect via the aws\_caller\_identity data source (needs live STS creds at plan time). Set explicitly for offline plan workflows (CI examples-build, architecture-diagram render) where STS isn't reachable. | `string` | `""` | no |
+| <a name="input_additional_policy_statements"></a> [additional\_policy\_statements](#input\_additional\_policy\_statements) | Escape hatch — list of additional IAM policy statement objects merged into the key policy. Use when you need a permission shape the variables above don't cover. | <pre>list(object({<br/>    sid           = optional(string)<br/>    effect        = optional(string, "Allow")<br/>    actions       = list(string)<br/>    not_actions   = optional(list(string), [])<br/>    resources     = optional(list(string), ["*"])<br/>    not_resources = optional(list(string), [])<br/>    principals = optional(list(object({<br/>      type        = string<br/>      identifiers = list(string)<br/>    })), [])<br/>    conditions = optional(list(object({<br/>      test     = string<br/>      variable = string<br/>      values   = list(string)<br/>    })), [])<br/>  }))</pre> | `[]` | no |
+| <a name="input_customer_master_key_spec"></a> [customer\_master\_key\_spec](#input\_customer\_master\_key\_spec) | Cryptographic key material spec. SYMMETRIC\_DEFAULT is the right answer for almost every SSE-KMS use case; the asymmetric specs are for digital signatures or key wrapping. | `string` | `"SYMMETRIC_DEFAULT"` | no |
+| <a name="input_deletion_window_in_days"></a> [deletion\_window\_in\_days](#input\_deletion\_window\_in\_days) | Days the key sits in PendingDeletion before AWS irreversibly deletes it. 7 minimum, 30 default (AWS recommends 30 for production). | `number` | `30` | no |
+| <a name="input_description"></a> [description](#input\_description) | Free-text description for the key (max 8192 chars). | `string` | `""` | no |
+| <a name="input_enable_key_rotation"></a> [enable\_key\_rotation](#input\_enable\_key\_rotation) | Enable automatic annual key-material rotation. AWS rotates the backing key while the key ID stays the same. Required for CIS AWS Foundations 3.8 and RBI cyber-security guidance on key lifecycle. | `bool` | `true` | no |
+| <a name="input_key_administrators"></a> [key\_administrators](#input\_key\_administrators) | List of IAM principal ARNs allowed to administer the key (manage policy, schedule deletion, enable/disable rotation) but NOT use it for cryptographic operations. | `list(string)` | `[]` | no |
+| <a name="input_key_usage"></a> [key\_usage](#input\_key\_usage) | Cryptographic operations the key supports. ENCRYPT\_DECRYPT covers SSE-KMS for S3/EBS/RDS/Logs; SIGN\_VERIFY is for digital signatures. | `string` | `"ENCRYPT_DECRYPT"` | no |
+| <a name="input_key_users"></a> [key\_users](#input\_key\_users) | List of IAM principal ARNs allowed to perform cryptographic operations (Encrypt, Decrypt, ReEncrypt*, GenerateDataKey*, DescribeKey) using the key. | `list(string)` | `[]` | no |
+| <a name="input_multi_region"></a> [multi\_region](#input\_multi\_region) | Create the key as a multi-region primary. Set true if you plan to replicate it to a DR region via a separate replica resource. Cannot be changed after key creation. | `bool` | `false` | no |
+| <a name="input_service_principals"></a> [service\_principals](#input\_service\_principals) | List of AWS service principal names that can use the key via the corresponding service. E.g. ["logs.ap-south-1.amazonaws.com"] for a CloudWatch Log Group, ["s3.amazonaws.com"] for an S3 bucket. Constrained by a kms:ViaService condition. | `list(string)` | `[]` | no |
+| <a name="input_tags"></a> [tags](#input\_tags) | Additional tags merged onto every taggable resource (the key and the alias). | `map(string)` | `{}` | no |
+## Outputs
+
+| Name | Description |
+|------|-------------|
+| <a name="output_alias_arn"></a> [alias\_arn](#output\_alias\_arn) | ARN of the KMS alias. |
+| <a name="output_alias_name"></a> [alias\_name](#output\_alias\_name) | Fully-qualified alias name (with the leading "alias/" prefix). |
+| <a name="output_key_arn"></a> [key\_arn](#output\_key\_arn) | ARN of the KMS key. |
+| <a name="output_key_id"></a> [key\_id](#output\_key\_id) | ID of the KMS key. |
+| <a name="output_key_rotation_enabled"></a> [key\_rotation\_enabled](#output\_key\_rotation\_enabled) | Whether automatic annual key-material rotation is on. Always false for non-symmetric keys (AWS does not support rotation on those). |
+| <a name="output_multi_region"></a> [multi\_region](#output\_multi\_region) | Whether this key was created as a multi-region primary. |
 <!-- END_TF_DOCS -->
 
 ## License
