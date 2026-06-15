@@ -8,6 +8,13 @@ Releases are cut automatically by `release-please` on merge to `main`,
 driven by Conventional Commit prefixes (`feat:` → minor, `fix:`/`docs:`/`chore:` → patch,
 `feat!:` or `BREAKING CHANGE:` footer → major).
 
+## 0.1.0 (2026-06-15)
+
+
+### Features
+
+* initial terraform-aws-kms module ([517e8f0](https://github.com/devotica-labs/terraform-aws-kms/commit/517e8f0aae1dc754e804945961f22492d67b75b9))
+
 ## [Unreleased]
 
 ### Added
