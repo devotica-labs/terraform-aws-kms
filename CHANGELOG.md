@@ -8,6 +8,13 @@ Releases are cut automatically by `release-please` on merge to `main`,
 driven by Conventional Commit prefixes (`feat:` → minor, `fix:`/`docs:`/`chore:` → patch,
 `feat!:` or `BREAKING CHANGE:` footer → major).
 
+## [0.1.1](https://github.com/devotica-labs/terraform-aws-kms/compare/v0.1.0...v0.1.1) (2026-06-17)
+
+
+### Bug Fixes
+
+* **release:** replace dead CycloneDX action with anchore/sbom-action ([#6](https://github.com/devotica-labs/terraform-aws-kms/issues/6)) ([b63a546](https://github.com/devotica-labs/terraform-aws-kms/commit/b63a546e0224877c211092304d8a7ca3fded1062))
+
 ## 0.1.0 (2026-06-15)
 
 
